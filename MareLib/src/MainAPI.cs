@@ -205,7 +205,7 @@ public class MainAPI : ModSystem, IRenderer
     /// </summary>
     public override void StartPre(ICoreAPI api)
     {
-        NativesLoader.Load(this);
+        NativesLoader.Load(Mod.Logger, this);
 
         // Register new asset paths.
         AssetCategory.categories["objs"] = new AssetCategory("objs", false, EnumAppSide.Client);
