@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using Vintagestory.API.Client;
@@ -78,6 +79,24 @@ public static class MareShaderRegistry
 
     public static string SetUBOBindings(Dictionary<string, int> uniqueBlocks, string code)
     {
+        // On macOS OpenGL (GLSL 4.10, no 420pack), remove any layout(binding=...)
+        if (OperatingSystem.IsMacOS())
+        {
+            code = StripLayoutBindingMacros(code);  // remove binding inside any layout(...)
+            // Nuke hard 420pack and explicit ARB requires if they appear
+            code = Regex.Replace(
+                code,
+                @"^\s*#\s*extension\s+GL_ARB_explicit_attrib_location\s*:\s*\w+\s*$",
+                "",
+                RegexOptions.Multiline);
+            code = Regex.Replace(
+                code,
+                @"^\s*#\s*extension\s+GL_ARB_shading_language_420pack\s*:\s*\w+\s*$",
+                "",
+                RegexOptions.Multiline);
+            return code;
+        }
+
         string pattern = @"layout\(std140\)\s+uniform\s+(\w+)";
 
         return Regex.Replace(code, pattern, match =>
@@ -92,6 +111,48 @@ public static class MareShaderRegistry
 
             return modifiedBlock;
         });
+    }
+
+    /// <summary>
+    /// Removes ", binding = N" (or "binding = N,") from any layout(...) qualifier,
+    /// keeps other qualifiers (std140, location, etc.), and collapses empty layout().
+    /// Yes this is chatgpt cuz I don't want to write regex.
+    /// </summary>
+    private static string StripLayoutBindingMacros(string code)
+    {
+        return Regex.Replace(
+            code,
+            @"layout\s*\(([^)]*)\)",
+            m =>
+            {
+                string inside = m.Groups[1].Value;
+
+                // Remove ", binding = N" or "binding = N," (with arbitrary whitespace)
+                string cleaned = Regex.Replace(
+                    inside,
+                    @"\s*(,\s*)?binding\s*=\s*\d+\s*(,\s*)?",
+                    match =>
+                    {
+                        // If there are commas around the binding, keep a single comma between neighbors
+                        string s = match.Value;
+                        bool leftComma  = s.TrimStart().StartsWith(",");
+                        bool rightComma = s.TrimEnd().EndsWith(",");
+                        return (leftComma && rightComma) ? ", " : "";
+                    },
+                    RegexOptions.IgnoreCase);
+
+                // Normalize any double commas/spaces produced by the removal
+                cleaned = Regex.Replace(cleaned, @"\s*,\s*,\s*", ", ");
+                cleaned = Regex.Replace(cleaned, @"^\s*,\s*|\s*,\s*$", ""); // trim stray commas
+                cleaned = Regex.Replace(cleaned, @"\s{2,}", " ").Trim();
+
+                // If nothing left inside layout(...), drop the whole qualifier
+                return string.IsNullOrWhiteSpace(cleaned) ? "" : $"layout({cleaned})";
+            },
+            RegexOptions.Singleline | RegexOptions.IgnoreCase
+        )
+        // If we produced a bare "layout()" somewhere, remove it.
+        .Replace("layout()", "");
     }
 
     private static void RegisterShader(string vertPath, string fragPath, string? geomPath, string shaderName)

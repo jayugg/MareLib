@@ -53,16 +53,38 @@ public class MareShader
         if (numUniformBlocks > 0)
         {
             UniformBlockIds = new BindingIndex[numUniformBlocks];
+            bool onMac = OperatingSystem.IsMacOS();
 
             for (int i = 0; i < numUniformBlocks; i++)
             {
-                GL.GetActiveUniformBlock(program.ProgramId, i, ActiveUniformBlockParameter.UniformBlockNameLength, out int nameLength);
-                GL.GetActiveUniformBlockName(program.ProgramId, i, nameLength, out _, out string uniformBlockName);
+                GL.GetActiveUniformBlock(program.ProgramId, i,
+                    ActiveUniformBlockParameter.UniformBlockNameLength, out int nameLen);
 
-                GL.GetActiveUniformBlock(program.ProgramId, i, ActiveUniformBlockParameter.UniformBlockBinding, out int bindingPoint);
+                GL.GetActiveUniformBlockName(program.ProgramId, i, nameLen, out _, out string blockName);
 
-                // Register it, returns the id of the ubo at that index.
-                UniformBlockIds[i] = new BindingIndex(bindingPoint, UboRegistry.RegisterUboName(uniformBlockName));
+                // Stable id for this block name in your registry
+                int registryId = UboRegistry.RegisterUboName(blockName);
+
+                int bindingPoint;
+                if (onMac)
+                {
+                    // macOS GLSL can’t have layout(binding=...), so pick it here:
+                    bindingPoint = registryId;                 // 1:1 mapping keeps behavior deterministic
+                    GL.UniformBlockBinding(program.ProgramId, i, bindingPoint);
+                }
+                else
+                {
+                    // Preserve shader-declared binding on other platforms
+                    GL.GetActiveUniformBlock(program.ProgramId, i,
+                        ActiveUniformBlockParameter.UniformBlockBinding, out bindingPoint);
+
+                    // Optional: if shaders no longer declare a binding, fall back to registryId:
+                    if (bindingPoint < 0) { bindingPoint = registryId; }
+                    GL.UniformBlockBinding(program.ProgramId, i, bindingPoint);
+                }
+
+                // Keep the public shape the same: bindingPoint = GL binding; bindId = registry id
+                UniformBlockIds[i] = new BindingIndex(bindingPoint, registryId);
             }
         }
         else
@@ -70,6 +92,7 @@ public class MareShader
             UniformBlockIds = null;
         }
     }
+
 
     /// <summary>
     /// Use a shader, will stop the current shader if one is active.
